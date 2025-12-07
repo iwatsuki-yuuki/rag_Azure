@@ -1,0 +1,28 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "indexer",
+      "type": "python",
+      "program": "${workspaceFolder}/indexer.py",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "args": [
+          "${workspaceFolder}/companyrules.pdf"
+      ]
+    },
+    {
+      "name": "orchestrator",
+      "type": "python",
+      "request": "launch",
+      "module": "streamlit",
+      "console": "integratedTerminal",
+      "args": [
+          "run",
+          "${workspaceFolder}/orchestrator.py",
+          "--server.port",
+          "5678"
+      ]
+  }
+  ]
+}
