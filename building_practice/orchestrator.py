@@ -1,21 +1,27 @@
 import os
-from azure.search.documents import SearchClient
+import pandas as pd
 from openai import AzureOpenAI
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents.models import VectorizedQuery
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv(verbose=True)
 
-SEARCH_SERVICE_ENDPOINT = os.environ.get("SEARCH_SERVICE_ENDPOINT") # Azure AI Searchのエンドポイント
-SEARCH_SERVICE_API_KEY = os.environ.get("SEARCH_SERVICE_API_KEY") # Azure AI SearchのAPIキー
-SEARCH_SERVICE_INDEX_NAME = os.environ.get("SEARCH_SERVICE_INDEX_NAME") # Azure AI Searchのインデックス名
 AOAI_ENDPOINT = os.environ.get("AOAI_ENDPOINT") # Azure OpenAI Serviceのエンドポイント
 AOAI_API_VERSION = os.environ.get("AOAI_API_VERSION") # Azure OpenAI ServiceのAPIバージョン
 AOAI_API_KEY = os.environ.get("AOAI_API_KEY") # Azure OpenAI ServiceのAPIキー
-AOAI_EMBEDDING_MODEL_NAME = os.environ.get("AOAI_EMBEDDING_MODEL_NAME") # Azure OpenAI Serviceの埋め込みモデル名
 AOAI_CHAT_MODEL_NAME = os.environ.get("AOAI_CHAT_MODEL_NAME") # Azure OpenAI Serviceのチャットモデル名
+
+# CSVデータの読み込みとマージ
+script_dir = os.path.dirname(os.path.abspath(__file__))
+df_question = pd.read_csv(os.path.join(script_dir, "hanahira-question.csv"), index_col=0)
+df_data = pd.read_csv(os.path.join(script_dir, "hanahira-data.csv"), index_col=0)
+df_merged = df_question.merge(df_data[["答え"]], left_index=True, right_index=True)
+
+# 全Q&Aデータを Sources 形式の文字列に整形
+sources_text = "\n".join(
+    f"[Source{idx}]: カテゴリ: {row['カテゴリ']} / 質問: {row['質問内容']} / 答え: {row['答え']}"
+    for idx, row in df_merged.iterrows()
+)
 
 system_message_chat_conversation = """
 あなたはユーザーの質問に回答するチャットボットです。
@@ -29,13 +35,6 @@ system_message_chat_conversation = """
 def search(history):
     question = history[-1].get('content')
 
-    # Azure AI SearchのAPIに接続するためのクライアントを生成する
-    search_client = SearchClient(
-        endpoint=SEARCH_SERVICE_ENDPOINT,
-        index_name=SEARCH_SERVICE_INDEX_NAME,
-        credential=AzureKeyCredential(SEARCH_SERVICE_API_KEY)
-    )
-
     # Azure OpenAI ServiceのAPIに接続するためのクライアントを生成する
     openai_client = AzureOpenAI(
         azure_endpoint=AOAI_ENDPOINT,
@@ -43,41 +42,19 @@ def search(history):
         api_version=AOAI_API_VERSION
     )
 
-    # Azure OpenAI Serviceの埋め込み用APIを用いて、ユーザーからの質問をベクトル化する。
-    response = openai_client.embeddings.create(
-        input = question,
-        model = AOAI_EMBEDDING_MODEL_NAME
-    )
-
-    # ベクトル化された質問をAzure AI Searchに対して検索するためのクエリを生成する。
-    vector_query = VectorizedQuery(
-        vector=response.data[0].embedding,
-        k_nearest_neighbors=3,
-        fields="contentVector"
-    )
-
-    # ベクトル化された質問を用いて、Azure AI Searchに対してベクトル検索を行う。
-    results = search_client.search(
-        vector_queries=[vector_query],
-        select=['id', 'content'])
-
     # チャット履歴の中からユーザーの質問に対する回答を生成するためのメッセージを生成する。
     messages = []
 
     # 先頭にAIのキャラ付けを行うシステムメッセージを追加する。
     messages.insert(0, {"role": "system", "content": system_message_chat_conversation})
 
-    # 回答を生成するためにAzure AI Searchから取得した情報を整形する。
-    sources = ["[Source" + result["id"] + "]: " + result["content"] for result in results]
-    source = "\n".join(sources)
-
-    # ユーザーの質問と情報源を含むメッセージを生成する。
+    # ユーザーの質問とCSVから読み込んだ全Q&Aデータを含むメッセージを生成する。
     user_message = """
     {query}
 
     Sources:
     {source}
-    """.format(query=question, source=source)
+    """.format(query=question, source=sources_text)
 
     # メッセージを追加する。
     messages.append({"role": "user", "content": user_message})
